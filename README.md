@@ -1,5 +1,7 @@
 # avr-gcc-build-script
-Script to build avr-gcc 9.1 AND avr-libc latest, with built in support for Xmega3 devices
+
+Script to build avr-gcc 9.1 AND avr-libc3, with built in support for Xmega3 devices
 
 Based on the script from http://blog.zakkemble.net/avr-gcc-builds
-the modifications are minor, simply to use SVN version rather than the latest release, and apply the latest patch for Xmega3 devices.
+
+AVR-LIBC is being fetched from the AVR-LIBC3 fork, to allow updated verisons of AVR-LIBC to be built that include things NOT in the official old release.
