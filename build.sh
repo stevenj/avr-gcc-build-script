@@ -16,8 +16,20 @@ BUILD_WIN32=0
 # Build 64 bit Windows toolchain
 BUILD_WIN64=0
 
-# Build AVR-LibC
-BUILD_LIBC=1
+# Build Binutils?  Can be set on command line.
+if [ -z ${BUILD_BINUTILS+x} ]; then 
+	BUILD_BINUTILS=0 
+fi
+
+# Build AVR-GCC?  Can be set on command line.
+if [ -z ${BUILD_GCC+x} ]; then 
+	BUILD_GCC=0 
+fi
+
+# Build AVR-LibC?  Can be set on command line.
+if [ -z ${BUILD_LIBC+x} ]; then 
+	BUILD_LIBC=1 
+fi
 
 # Output locations for built toolchains
 PREFIX_LINUX=/opt/AVR/linux
@@ -50,7 +62,7 @@ set -e
 
 NAME_BINUTILS="binutils-2.32"
 NAME_GCC="gcc-9.1.0"
-NAME_LIBC="avr-libc-SVN"
+NAME_LIBC="avr-libc.git"
 
 HOST_WIN32="i686-w64-mingw32"
 HOST_WIN64="x86_64-w64-mingw32"
@@ -82,29 +94,6 @@ makeDir()
 	mkdir -p "$1"
 }
 
-fixGCCAVR()
-{
-	# In GCC 7.1.0 there seems to be an issue with INT8_MAX and some other things being undefined in /gcc/config/avr/avr.c when building for Windows.
-	# Adding '#include <stdint.h>' doesn't fix it, but manually defining the values does the trick.
-
-	echo "Fixing missing defines..."
-
-	DEFSFIX="
-		#if (defined _WIN32 || defined __CYGWIN__)
-		#define INT8_MIN (-128)
-		#define INT16_MIN (-32768)
-		#define INT8_MAX 127
-		#define INT16_MAX 32767
-		#define UINT8_MAX 0xff
-		#define UINT16_MAX 0xffff
-		#endif
-	"
-
-	ORIGINAL=$(cat ../gcc/config/avr/avr.c)
-	echo "$DEFSFIX" > ../gcc/config/avr/avr.c
-	echo "$ORIGINAL" >> ../gcc/config/avr/avr.c
-}
-
 echo "Clearing output directories..."
 [ $BUILD_LINUX -eq 1 ] && makeDir "$PREFIX_LINUX"
 [ $BUILD_WIN32 -eq 1 ] && makeDir "$PREFIX_WIN32"
@@ -118,25 +107,25 @@ CC=""
 export CC
 
 echo "Downloading sources..."
-rm -f $NAME_BINUTILS.tar.xz
-rm -rf $NAME_BINUTILS/
-wget ftp://ftp.mirrorservice.org/sites/ftp.gnu.org/gnu/binutils/$NAME_BINUTILS.tar.xz
-rm -f $NAME_GCC.tar.xz
-rm -rf $NAME_GCC/
-wget ftp://ftp.mirrorservice.org/sites/sourceware.org/pub/gcc/releases/$NAME_GCC/$NAME_GCC.tar.xz
+if [ $BUILD_BINUTILS -eq 1 ]; then
+	rm -f $NAME_BINUTILS.tar.xz
+	rm -rf $NAME_BINUTILS/
+	wget ftp://ftp.mirrorservice.org/sites/ftp.gnu.org/gnu/binutils/$NAME_BINUTILS.tar.xz
+fi
+
+if [ $BUILD_GCC -eq 1 ]; then
+	rm -f $NAME_GCC.tar.xz
+	rm -rf $NAME_GCC/
+	wget ftp://ftp.mirrorservice.org/sites/sourceware.org/pub/gcc/releases/$NAME_GCC/$NAME_GCC.tar.xz
+fi
+
 if [ $BUILD_LIBC -eq 1 ]; then
-	rm -f $NAME_LIBC.tar.bz2
 	rm -rf $NAME_LIBC/
-	if [ "$NAME_LIBC" = "avr-libc-SVN" ]; then
-		rm -f avrxmega3-v9.diff.bz2
-		wget -O avrxmega3-v9.diff.bz2 https://savannah.nongnu.org/patch/download.php?file_id=45738
-		svn co svn://svn.savannah.nongnu.org/avr-libc/trunk
-		mv trunk/avr-libc $NAME_LIBC
-		rm -rf trunk
-		echo "Patching for XMEGA3 support"
-		cat avrxmega3-v9.diff.bz2 | bzip2 -dc - | patch -d avr-libc-SVN -p0
+	if [ "$NAME_LIBC" = "avr-libc.git" ]; then
+		git clone https://github.com/stevenj/avr-libc3.git "$NAME_LIBC"
 		echo "Preparing"
 		cd $NAME_LIBC
+		git checkout 8e93ef44b707cdcddf46e5e8d770fd68c59829cc
 		./bootstrap
 		cd ..
 	else
@@ -153,35 +142,38 @@ confMake()
 }
 
 # Make AVR-Binutils
-echo "Making Binutils..."
-echo "Extracting..."
-tar xf $NAME_BINUTILS.tar.xz
-mkdir -p $NAME_BINUTILS/obj-avr
-cd $NAME_BINUTILS/obj-avr
-[ $BUILD_LINUX -eq 1 ] && confMake "$PREFIX_LINUX" "$OPTS_BINUTILS"
-[ $BUILD_WIN32 -eq 1 ] && confMake "$PREFIX_WIN32" "$OPTS_BINUTILS" --host=$HOST_WIN32 --build=`../config.guess`
-[ $BUILD_WIN64 -eq 1 ] && confMake "$PREFIX_WIN64" "$OPTS_BINUTILS" --host=$HOST_WIN64 --build=`../config.guess`
-cd ../../
+if [ $BUILD_BINUTILS -eq 1 ]; then
+	echo "Making Binutils..."
+	echo "Extracting..."
+	tar xf $NAME_BINUTILS.tar.xz
+	mkdir -p $NAME_BINUTILS/obj-avr
+	cd $NAME_BINUTILS/obj-avr
+	[ $BUILD_LINUX -eq 1 ] && confMake "$PREFIX_LINUX" "$OPTS_BINUTILS"
+	[ $BUILD_WIN32 -eq 1 ] && confMake "$PREFIX_WIN32" "$OPTS_BINUTILS" --host=$HOST_WIN32 --build=`../config.guess`
+	[ $BUILD_WIN64 -eq 1 ] && confMake "$PREFIX_WIN64" "$OPTS_BINUTILS" --host=$HOST_WIN64 --build=`../config.guess`
+	cd ../../
+fi	
 
 # Make AVR-GCC
-echo "Making GCC..."
-echo "Extracting..."
-tar xf $NAME_GCC.tar.xz
-mkdir -p $NAME_GCC/obj-avr
-cd $NAME_GCC
-chmod +x ./contrib/download_prerequisites
-./contrib/download_prerequisites
-cd obj-avr
-# fixGCCAVR
-[ $BUILD_LINUX -eq 1 ] && confMake "$PREFIX_LINUX" "$OPTS_GCC"
-[ $BUILD_WIN32 -eq 1 ] && confMake "$PREFIX_WIN32" "$OPTS_GCC" --host=$HOST_WIN32 --build=`../config.guess`
-[ $BUILD_WIN64 -eq 1 ] && confMake "$PREFIX_WIN64" "$OPTS_GCC" --host=$HOST_WIN64 --build=`../config.guess`
-cd ../../
+if [ $BUILD_GCC -eq 1 ]; then
+	echo "Making GCC..."
+	echo "Extracting..."
+	tar xf $NAME_GCC.tar.xz
+	mkdir -p $NAME_GCC/obj-avr
+	cd $NAME_GCC
+	chmod +x ./contrib/download_prerequisites
+	./contrib/download_prerequisites
+	cd obj-avr
+	[ $BUILD_LINUX -eq 1 ] && confMake "$PREFIX_LINUX" "$OPTS_GCC"
+	[ $BUILD_WIN32 -eq 1 ] && confMake "$PREFIX_WIN32" "$OPTS_GCC" --host=$HOST_WIN32 --build=`../config.guess`
+	[ $BUILD_WIN64 -eq 1 ] && confMake "$PREFIX_WIN64" "$OPTS_GCC" --host=$HOST_WIN64 --build=`../config.guess`
+	cd ../../
+fi	
 
 # Make AVR-LibC
 if [ $BUILD_LIBC -eq 1 ]; then
 	echo "Making AVR-LibC..."
-	if [ "$NAME_LIBC" != "avr-libc-SVN" ]; then
+	if [ "$NAME_LIBC" != "avr-libc.git" ]; then
 		echo "Extracting..."
 		bunzip2 -c $NAME_LIBC.tar.bz2 | tar xf -
 	fi
